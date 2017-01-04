@@ -1,0 +1,11 @@
+doc2vec_log.pickle
+doc2vecV2_log.pickle
+docs.pickle
+docs_dataset.pickle
+labeled-data.csv
+shuffled-labeled-data.csv
+test-neg.txt
+test-pos.txt
+train-neg.txt
+train-pos.txt
+train-unsup.txt
