@@ -5,6 +5,28 @@ import pandas as pd
 from collections import Counter, deque
 from nltk import word_tokenize
 
+def process_new_doc(doc, dictionary):
+
+    new_word_idx = list()
+
+    for word in doc:
+        if word in dictionary:
+            index = dictionary[word]
+        else:
+            index = 0
+        new_word_idx.append(index)
+
+    return new_word_idx
+
+def remove_punctuation(sentence):
+    regex = re.compile('[%s]' % re.escape(string.punctuation))
+    return regex.sub('', sentence)
+
+def custom_tokenizer(sentence):
+    sentence = remove_punctuation(sentence)
+    sentence = sentence.lower()
+    return sentence.split()
+
 def time_format(second):
     h = second // 3600
     m = ((second % 3600) // 60)

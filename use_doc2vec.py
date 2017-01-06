@@ -21,9 +21,9 @@ train_inputs, train_labels, test_inputs, test_labels = create_train_test_data('/
 
 # PV-DBOW model
 D2V = doc2vec(optimize='GradDes', learning_rate=0.025, loss_type='sampled_softmax_loss', log="doc2vecV2_log.pickle", model='pv-dbow', n_skip=2, skip_window=2, path="/doc2vecV2_model/")
-D2V.fit(n_epoch=5)
+D2V.fit(n_epoch=21)
 
-train_inputs, train_labels, test_inputs, test_labels = create_train_test_data('/doc2vecV2_model/doc_embeddings.pickle', 'shuffled-labeled-data.csv', test_size=0.2)
+train_inputs, train_labels, test_inputs, test_labels = create_train_test_data('/doc2vecV2_model/doc_embeddings.pickle', 'shuffled-labeled-data.csv', test_size=0.1)
 
 
 '''
@@ -42,8 +42,14 @@ clf.fit(train_inputs, train_labels)
 LogisticRegression(C=1.0, class_weight=None, dual=False, fit_intercept=True,
           intercept_scaling=1, penalty='l2', random_state=None, tol=0.0001)
 
-print(clf.score(test_inputs, test_labels)) # DM - 25 epochs: ~0.674, DBOW - 5 epochs: ~0.625
+print(clf.score(test_inputs, test_labels)) # DM - 25 epochs: ~0.674, DBOW - 20 epochs: ~0.83868
 
+with open('review-pos.txt', 'r') as f:
+    for line in f:
+        new_doc_vector = D2V.fit_dbow_new_doc(line, n_epoch=20, predict_path='predict/')
+        print(new_doc_vector)
+        prediction = clf.predict(new_doc_vector)
+        print(prediction)
 
 '''
 # Customized SVM class - too long: ~ 4 hours

@@ -9,3 +9,5 @@ test-pos.txt
 train-neg.txt
 train-pos.txt
 train-unsup.txt
+review-pos.txt
+review-neg.txt

@@ -6,7 +6,7 @@ from collections import Counter, deque
 from itertools import compress
 from datetime import datetime
 from sklearn.base import BaseEstimator, TransformerMixin
-from preprocessing_data import load_data, time_format
+from preprocessing_data import load_data, time_format, custom_tokenizer, process_new_doc
 
 class doc2vec(BaseEstimator, TransformerMixin):
     def __init__(self, batch_size=128, window_size=8, concat=True, doc_embedding_size=128, word_embedding_size=128,
@@ -124,24 +124,26 @@ class doc2vec(BaseEstimator, TransformerMixin):
             self.doc_embeddings = tf.Variable(
                 tf.random_uniform([self.document_size, self.doc_embedding_size], -1.0, 1.0))
 
-            word_embed = tf.nn.embedding_lookup(self.word_embeddings, self.train_inputs)
+            self.word_embed = tf.nn.embedding_lookup(self.word_embeddings, self.train_inputs)
 
-            doc_embed = tf.nn.embedding_lookup(self.doc_embeddings, self.train_doc_labels)
+            self.doc_embed = tf.nn.embedding_lookup(self.doc_embeddings, self.train_doc_labels)
 
-            embed = tf.concat(1, [word_embed, doc_embed])
+            print('Shapes:', self.word_embed.get_shape(), self.doc_embed.get_shape())
+
+            embed = tf.concat(1, [self.word_embed, self.doc_embed])
 
             reduced_embed = tf.div(tf.reduce_sum(embed, 1), self.span)
 
-            weights = tf.Variable(
+            self.weights = tf.Variable(
                 tf.truncated_normal([self.vocab_size, self.doc_embedding_size],
                                     stddev=1.0 / math.sqrt(self.doc_embedding_size)))
-            biases = tf.Variable(tf.zeros([self.vocab_size]))
+            self.biases = tf.Variable(tf.zeros([self.vocab_size]))
 
             if self.loss_type == 'sampled_softmax_loss':
-                loss = tf.nn.sampled_softmax_loss(weights, biases, reduced_embed,
+                loss = tf.nn.sampled_softmax_loss(self.weights, self.biases, reduced_embed,
                                                   self.train_labels, self.n_neg_samples, self.vocab_size)
             elif self.loss_type == 'nce_loss':
-                loss = tf.nn.nce_loss(weights, biases, reduced_embed,
+                loss = tf.nn.nce_loss(self.weights, self.biases, reduced_embed,
                                       self.train_labels, self.n_neg_samples, self.vocab_size)
             self.loss = tf.reduce_mean(loss)
 
@@ -230,8 +232,8 @@ class doc2vec(BaseEstimator, TransformerMixin):
             epoch += 1
 
             self.data_index = 0
-            self.word_embeddings = self.sess.run(self.normalized_word_embeddings)
-            self.doc_embeddings = self.sess.run(self.normalized_doc_embeddings)
+            self.finalized_word_embeddings = self.sess.run(self.normalized_word_embeddings)
+            self.finalized_doc_embeddings = self.sess.run(self.normalized_doc_embeddings)
 
             print('Saving current session')
             self.save()
@@ -296,10 +298,10 @@ class doc2vec(BaseEstimator, TransformerMixin):
             else:
                 combined_embed_vector_length = self.word_embedding_size + self.doc_embedding_size
 
-            weights = tf.Variable(
+            self.weights = tf.Variable(
                 tf.truncated_normal([self.vocab_size, combined_embed_vector_length],
                                     stddev=1.0 / math.sqrt(combined_embed_vector_length)))
-            biases = tf.Variable(tf.zeros([self.vocab_size]))
+            self.biases = tf.Variable(tf.zeros([self.vocab_size]))
 
             embed = []
             if self.concat:
@@ -319,10 +321,10 @@ class doc2vec(BaseEstimator, TransformerMixin):
             self.embed = tf.concat(1, embed)
 
             if self.loss_type == 'sampled_softmax_loss':
-                loss = tf.nn.sampled_softmax_loss(weights, biases, self.embed,
+                loss = tf.nn.sampled_softmax_loss(self.weights, self.biases, self.embed,
                                                   self.train_labels, self.n_neg_samples, self.vocab_size)
             elif self.loss_type == 'nce_loss':
-                loss = tf.nn.nce_loss(weights, biases, self.embed,
+                loss = tf.nn.nce_loss(self.weights, self.biases, self.embed,
                                       self.train_labels, self.n_neg_samples, self.vocab_size)
             self.loss = tf.reduce_mean(loss)
 
@@ -407,14 +409,104 @@ class doc2vec(BaseEstimator, TransformerMixin):
             epoch += 1
 
             self.data_index = 0
-            self.word_embeddings = self.sess.run(self.normalized_word_embeddings)
-            self.doc_embeddings = self.sess.run(self.normalized_doc_embeddings)
+            self.finalized_word_embeddings = self.sess.run(self.normalized_word_embeddings)
+            self.finalized_doc_embeddings = self.sess.run(self.normalized_doc_embeddings)
 
             print('Saving current session')
             self.save()
             print('Session saved successfully')
 
         return self
+
+    def generate_batch_dbow_new_doc(self):
+
+        batch = np.ndarray(shape=(self.batch_size, self.n_skip), dtype=np.int32)
+        labels = np.ndarray(shape=(self.batch_size, 1), dtype=np.int32)
+        doc_labels = np.ndarray(shape=(self.batch_size, 1), dtype=np.int32)
+        is_final = False
+        new_doc_index = self.doc_idx[-1] + 1
+
+        buffer = deque(maxlen=self.span)
+
+        for _ in range(self.span):
+            buffer.append(self.new_word_idx[self.new_data_index])
+            if self.new_data_index == (len(self.new_word_idx) - 1):
+                is_final = True
+                print('Final reached')
+            self.new_data_index  = (self.new_data_index + 1) % (len(self.new_word_idx))
+
+        i = 0
+        while i < self.batch_size:
+            target = self.skip_window
+            targets_to_avoid = [self.skip_window]
+            batch_temp = np.ndarray(shape=(self.n_skip), dtype=np.int32)
+
+            for j in range(self.n_skip):
+                while target in targets_to_avoid:
+                    target = random.randint(0, self.span - 1)
+                targets_to_avoid.append(target)
+
+            batch[i] = batch_temp
+            labels[i, 0] = buffer[self.skip_window]
+            doc_labels[i, 0] = new_doc_index
+            i += 1
+
+            buffer.append(self.new_word_idx[self.new_data_index])
+            if self.new_data_index == (len(self.new_word_idx) - 1):
+                is_final = True
+                print('Final reached')
+            self.new_data_index = (self.new_data_index + 1) % (len(self.new_word_idx))
+
+        return batch, labels, doc_labels, is_final
+
+    def fit_dbow_new_doc(self, doc, n_epoch, predict_path):
+        doc = custom_tokenizer(doc)
+
+        self.new_data_index = 0
+        self.new_word_idx = process_new_doc(doc, self.dictionary)
+
+        with open(self.path + 'doc_embeddings.pickle', 'rb') as f:
+            d_embeddings = pickle.load(f)
+
+        print('Fitting new document to existing pv-dbow model')
+
+        self.sess.run(self.init_op)
+        d_embeddings = np.insert(arr=d_embeddings, obj=self.document_size,
+                                 values=np.random.uniform(-1.0, 1.0, size=self.doc_embedding_size), axis=0)
+
+        epoch = 1
+        while epoch <= n_epoch:
+            if epoch == 1:
+                self.saver.restore(self.sess, self.path + "model.ckpt")
+            else:
+                self.saver.restore(self.sess, self.path + predict_path + "model.ckpt")
+            is_final = False
+            epoch_loss = 0
+            batches_run = 0
+            resize_op = tf.assign(self.doc_embeddings, d_embeddings, validate_shape=False)
+            self.sess.run(resize_op)
+
+            while not is_final:
+                batch_inputs, batch_labels, batch_doc_labels, is_final = self.generate_batch_dbow_new_doc()
+                feed_dict = {self.train_inputs: batch_inputs, self.train_labels: batch_labels,
+                             self.train_doc_labels: batch_doc_labels}
+
+                _, loss_val = self.sess.run([self.optimizer, self.loss], feed_dict=feed_dict)
+                epoch_loss += loss_val
+                batches_run += 1
+
+            print('Epoch', epoch, 'completed out of', n_epoch, 'loss:', epoch_loss, 'batches_run:', batches_run,
+                  'loss per batch: %.2f' % float(loss_val/batches_run))
+            epoch += 1
+
+            self.new_data_index = 0
+            self.new_doc_embeddings = self.sess.run(self.normalized_doc_embeddings)
+
+            self.saver.save(self.sess, self.path + predict_path + 'model.ckpt')
+            with open(self.path + predict_path + 'word_embeddings.pickle', 'wb') as f:
+                pickle.dump(self.new_doc_embeddings, f)
+
+        return self.new_doc_embeddings[-1]
 
     def save(self):
         params = self.get_params()
