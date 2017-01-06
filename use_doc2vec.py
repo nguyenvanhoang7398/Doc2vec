@@ -44,12 +44,11 @@ LogisticRegression(C=1.0, class_weight=None, dual=False, fit_intercept=True,
 
 print(clf.score(test_inputs, test_labels)) # DM - 25 epochs: ~0.674, DBOW - 20 epochs: ~0.83868
 
-with open('review-pos.txt', 'r') as f:
-    for line in f:
-        new_doc_vector = D2V.fit_dbow_new_doc(line, n_epoch=20, predict_path='predict/')
-        print(new_doc_vector)
-        prediction = clf.predict(new_doc_vector)
-        print(prediction)
+with open('reviews.txt', 'r') as f:
+    new_doc_vectors = D2V.fit_dbow_new_doc(f, n_epoch=20, predict_path='predict/')
+    print(new_doc_vectors)
+    prediction = clf.predict(new_doc_vectors)
+    print(prediction)
 
 '''
 # Customized SVM class - too long: ~ 4 hours

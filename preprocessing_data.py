@@ -5,27 +5,14 @@ import pandas as pd
 from collections import Counter, deque
 from nltk import word_tokenize
 
-def process_new_doc(doc, dictionary):
-
-    new_word_idx = list()
-
-    for word in doc:
-        if word in dictionary:
-            index = dictionary[word]
-        else:
-            index = 0
-        new_word_idx.append(index)
-
-    return new_word_idx
-
 def remove_punctuation(sentence):
     regex = re.compile('[%s]' % re.escape(string.punctuation))
     return regex.sub('', sentence)
 
-def custom_tokenizer(sentence):
-    sentence = remove_punctuation(sentence)
-    sentence = sentence.lower()
-    return sentence.split()
+def custom_tokenizer(doc):
+    doc = remove_punctuation(doc)
+    doc = doc.lower()
+    return doc.split()
 
 def time_format(second):
     h = second // 3600
@@ -155,3 +142,23 @@ def create_train_test_data(docs_embeddings_pickle, data_file, test_size=0.1):
 
     return train_inputs, train_labels, test_inputs, test_labels
 
+def process_new_docs(docs, dictionary, next_doc_idx):
+    print('Run process_new_doc(...)')
+
+    new_word_idx = list()
+    new_doc_idx = list()
+    len_doc = 0
+
+    for i, doc in enumerate(docs):
+        doc = custom_tokenizer(doc)
+        new_doc_idx.extend([i + next_doc_idx] * len(doc))
+        for word in doc:
+            if word in dictionary:
+                index = dictionary[word]
+            else:
+                index = 0
+            new_word_idx.append(index)
+
+        len_doc = i+1
+
+    return new_word_idx, new_doc_idx, len_doc

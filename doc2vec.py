@@ -6,7 +6,7 @@ from collections import Counter, deque
 from itertools import compress
 from datetime import datetime
 from sklearn.base import BaseEstimator, TransformerMixin
-from preprocessing_data import load_data, time_format, custom_tokenizer, process_new_doc
+from preprocessing_data import load_data, time_format, custom_tokenizer, process_new_docs
 
 class doc2vec(BaseEstimator, TransformerMixin):
     def __init__(self, batch_size=128, window_size=8, concat=True, doc_embedding_size=128, word_embedding_size=128,
@@ -424,46 +424,48 @@ class doc2vec(BaseEstimator, TransformerMixin):
         labels = np.ndarray(shape=(self.batch_size, 1), dtype=np.int32)
         doc_labels = np.ndarray(shape=(self.batch_size, 1), dtype=np.int32)
         is_final = False
-        new_doc_index = self.doc_idx[-1] + 1
 
         buffer = deque(maxlen=self.span)
+        buffer_doc = deque(maxlen=self.span)
 
         for _ in range(self.span):
             buffer.append(self.new_word_idx[self.new_data_index])
+            buffer_doc.append(self.new_doc_idx[self.new_data_index])
             if self.new_data_index == (len(self.new_word_idx) - 1):
                 is_final = True
                 print('Final reached')
-            self.new_data_index  = (self.new_data_index + 1) % (len(self.new_word_idx))
+            self.new_data_index = (self.new_data_index + 1) % len(self.new_word_idx)
 
         i = 0
         while i < self.batch_size:
-            target = self.skip_window
-            targets_to_avoid = [self.skip_window]
-            batch_temp = np.ndarray(shape=(self.n_skip), dtype=np.int32)
+            if len(set(buffer_doc)) == 1:
+                target = self.skip_window
+                targets_to_avoid = [self.skip_window]
+                batch_temp = np.ndarray(shape=(self.n_skip), dtype=np.int32)
 
-            for j in range(self.n_skip):
-                while target in targets_to_avoid:
-                    target = random.randint(0, self.span - 1)
-                targets_to_avoid.append(target)
+                for j in range(self.n_skip):
+                    while target in targets_to_avoid:
+                        target = random.randint(0, self.span - 1)
+                    targets_to_avoid.append(target)
+                    batch_temp[j] = buffer[target]
 
-            batch[i] = batch_temp
-            labels[i, 0] = buffer[self.skip_window]
-            doc_labels[i, 0] = new_doc_index
-            i += 1
+                batch[i] = batch_temp
+                labels[i, 0] = buffer[self.skip_window]
+                doc_labels[i, 0] = self.new_doc_idx[self.new_data_index]
+                i += 1
 
             buffer.append(self.new_word_idx[self.new_data_index])
+            buffer_doc.append(self.new_doc_idx[self.new_data_index])
             if self.new_data_index == (len(self.new_word_idx) - 1):
                 is_final = True
                 print('Final reached')
-            self.new_data_index = (self.new_data_index + 1) % (len(self.new_word_idx))
+            self.new_data_index = (self.new_data_index + 1) % len(self.new_word_idx)
 
         return batch, labels, doc_labels, is_final
 
-    def fit_dbow_new_doc(self, doc, n_epoch, predict_path):
-        doc = custom_tokenizer(doc)
-
+    def fit_dbow_new_doc(self, docs, n_epoch, predict_path):
         self.new_data_index = 0
-        self.new_word_idx = process_new_doc(doc, self.dictionary)
+        self.new_word_idx, self.new_doc_idx, len_doc = process_new_docs(docs, self.dictionary, next_doc_idx=(self.doc_idx[-1] + 1))
 
         with open(self.path + 'doc_embeddings.pickle', 'rb') as f:
             d_embeddings = pickle.load(f)
@@ -471,8 +473,9 @@ class doc2vec(BaseEstimator, TransformerMixin):
         print('Fitting new document to existing pv-dbow model')
 
         self.sess.run(self.init_op)
-        d_embeddings = np.insert(arr=d_embeddings, obj=self.document_size,
-                                 values=np.random.uniform(-1.0, 1.0, size=self.doc_embedding_size), axis=0)
+        for i in range(len_doc):
+            d_embeddings = np.insert(arr=d_embeddings, obj=(self.document_size + i),
+                                     values=np.random.uniform(-1.0, 1.0, size=self.doc_embedding_size), axis=0)
 
         epoch = 1
         while epoch <= n_epoch:
@@ -506,7 +509,7 @@ class doc2vec(BaseEstimator, TransformerMixin):
             with open(self.path + predict_path + 'word_embeddings.pickle', 'wb') as f:
                 pickle.dump(self.new_doc_embeddings, f)
 
-        return self.new_doc_embeddings[-1]
+        return self.new_doc_embeddings[-len_doc:]
 
     def save(self):
         params = self.get_params()
