@@ -362,30 +362,45 @@ class doc2vec(BaseEstimator, TransformerMixin):
     def generate_batch_dm(self):
         assert self.batch_size % self.window_size == 0
 
+        # Initialize numpy array of each variable
         batch = np.ndarray(shape=(self.batch_size, self.span), dtype=np.int32)
         labels = np.ndarray(shape=(self.batch_size, 1), dtype=np.int32)
         is_final = False
 
+        # Buffer for reading frame of both word and document with max length = self.span
         buffer = deque(maxlen=self.span)
         buffer_doc = deque(maxlen=self.span)
 
-
+        # FIll buffer with word_idx and buffer_doc with doc_idx in range of self.span
         for _ in range(self.span):
             buffer.append(self.word_idx[self.data_index])
             buffer_doc.append(self.doc_idx[self.data_index])
+
+            # Check if we have reached the end of document. If so, signal the model by is_final variable
+            # to stop generating batch and end current epoch
             if self.data_index == (len(self.word_idx) - 1):
                 is_final = True
                 print('Final reached')
+
+            # Use modulo to avoid IndexOutOfBoundException
             self.data_index = (self.data_index + 1) % len(self.word_idx)
 
+        # Mask the whole reading frame with 1 and the last element with 0
         mask = [1] * self.span
         mask[-1] = 0
         i = 0
 
+        # Fill batch with train-inputs and labels
         while i < self.batch_size:
+
+            # Check if all elements in the current buffer_doc are in the same doc
             if len(set(buffer_doc)) == 1:
                 doc_id = buffer_doc[-1]
+
+                # Form batch inputs with the words previous to predict words and doc_id
                 batch[i, :] = list(compress(buffer, mask)) + [doc_id]
+
+                # Label is the predict word (the last word in reading frame)
                 labels[i, 0] = buffer[-1]
                 i += 1
 
@@ -419,6 +434,7 @@ class doc2vec(BaseEstimator, TransformerMixin):
             else:
                 combined_embed_vector_length = self.word_embedding_size + self.doc_embedding_size
 
+            # Initialize variables of weights and biases
             self.weights = tf.Variable(
                 tf.truncated_normal([self.vocab_size, combined_embed_vector_length],
                                     stddev=1.0 / math.sqrt(combined_embed_vector_length)))
@@ -453,19 +469,24 @@ class doc2vec(BaseEstimator, TransformerMixin):
                                       self.train_labels, self.n_neg_samples, self.vocab_size)
             self.loss = tf.reduce_mean(loss)
 
+            # Use optimizer Op from tensorflow corresponding to params
             if self.optimize == 'Adagrad':
                 self.optimizer = tf.train.AdagradOptimizer(self.learning_rate).minimize(loss)
             elif self.optimize == 'GradDes':
                 # Use exponential_decay to stabilize learning rate
                 self.optimizer = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(loss)
 
+            # Normalize word_embeddings and doc_embeddings
             word_norm = tf.sqrt(tf.reduce_sum(tf.square(self.word_embeddings), 1, keep_dims=True))
             self.normalized_word_embeddings = self.word_embeddings / word_norm
 
             doc_norm = tf.sqrt(tf.reduce_sum(tf.square(self.doc_embeddings), 1, keep_dims=True))
             self.normalized_doc_embeddings = self.doc_embeddings / doc_norm
 
+            # Create init_op to initialize all tensorflow variables
             self.init_op = tf.initialize_all_variables()
+
+            # Create saver to save current session of instance
             self.saver = tf.train.Saver()
 
             print('Successfully _init_graph of dm-model')
@@ -474,11 +495,17 @@ class doc2vec(BaseEstimator, TransformerMixin):
 
         print('Fitting pv-dbow model')
 
+        # Run init Op
         sess = self.sess
         sess.run(self.init_op)
 
+        # Try to open log if exists, otherwise start the training with epoch = 1 and
+        # count total number of batches('total_batches') from 0
         try:
             with open(self.log, 'rb') as f:
+
+                # Load number of trained epoch ('epoch') and number of total batches
+                # ('total_batches') from log
                 epoch, total_batches = pickle.load(f)
                 epoch += 1
             print('STARTING WITH EPOCH:', epoch)
@@ -486,25 +513,34 @@ class doc2vec(BaseEstimator, TransformerMixin):
             epoch = 1
             total_batches = 0
         while epoch <= n_epoch:
+
+            # Restore saved model if not first epoch
             if epoch != 1:
                 self.saver.restore(self.sess, self.path + "model.ckpt")
 
+            # Initialize variables for new epoch
             epoch_loss = 0
             batches_run = 0
             is_final = False
             time0 = datetime.now()
 
+            # Keep generating new batches while end of file hasn't been reached
             while not is_final:
 
+                # Get variables from generate_batch_dbow and feed into current session
                 batch_inputs, batch_labels, is_final = self.generate_batch_dm()
                 feed_dict = {self.train_inputs: batch_inputs, self.train_labels: batch_labels}
 
+                # Run session to get loss value ('loss_val')
                 _, loss_val = self.sess.run([self.optimizer, self.loss], feed_dict=feed_dict)
                 epoch_loss += loss_val
                 batches_run += 1
+
+                # Keep track of 'total_batches' by increment if first epoch
                 if epoch == 1:
                     total_batches += 1
 
+                # Check process after every 5000 batches_run
                 if batches_run % 5000 == 0:
                     elapsed = (datetime.now() - time0)
                     second = elapsed.total_seconds()
@@ -512,6 +548,7 @@ class doc2vec(BaseEstimator, TransformerMixin):
                     time_per_batch = float(second) / 5000
                     time0 = datetime.now()
 
+                    # Total number of batches is not ready in the first epoch
                     if epoch != 1:
                         print('Batch run:', batches_run, '/', total_batches, '| Epoch:', epoch,
                               '| Average batch loss:', epoch_loss / (batches_run), '| Time:', time[0], 'hours',
@@ -530,14 +567,19 @@ class doc2vec(BaseEstimator, TransformerMixin):
 
             print('Epoch', epoch, 'completed out of', n_epoch, 'loss:', epoch_loss)
 
+            # Write to log file 'epoch' and 'total_batches'
             with open(self.log, 'wb') as f:
                 pickle.dump((epoch, total_batches), f)
             epoch += 1
 
+            # Reset data_index to 0
             self.data_index = 0
+
+            # Run session to get finalized_word_embeddings and finalized_docs_embeddings
             self.finalized_word_embeddings = self.sess.run(self.normalized_word_embeddings)
             self.finalized_doc_embeddings = self.sess.run(self.normalized_doc_embeddings)
 
+            # Save current session
             print('Saving current session')
             self.save()
             print('Session saved successfully')
