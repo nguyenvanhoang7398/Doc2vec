@@ -586,6 +586,7 @@ class doc2vec(BaseEstimator, TransformerMixin):
 
         return self
 
+    # Instance method to generate the next batch of PV-DBOW model for new document
     def generate_batch_dbow_new_doc(self):
 
         batch = np.ndarray(shape=(self.batch_size, self.n_skip), dtype=np.int32)
@@ -632,15 +633,22 @@ class doc2vec(BaseEstimator, TransformerMixin):
         return batch, labels, doc_labels, is_final
 
     def fit_dbow_new_doc(self, docs, n_epoch, predict_path):
+
+        # Initialize new_data_index to 0
         self.new_data_index = 0
+
+        # Update some params by calling process_new_docs function to read new documents
         self.new_word_idx, self.new_doc_idx, len_doc = process_new_docs(docs, self.dictionary, next_doc_idx=(self.doc_idx[-1] + 1))
 
+        # Open and import current doc_embeddings
         with open(self.path + 'doc_embeddings.pickle', 'rb') as f:
             d_embeddings = pickle.load(f)
 
         print('Fitting new document to existing pv-dbow model')
 
         self.sess.run(self.init_op)
+
+        # Initialize new vectors for doc_embeddings of new document by uniform random
         for i in range(len_doc):
             d_embeddings = np.insert(arr=d_embeddings, obj=(self.document_size + i),
                                      values=np.random.uniform(-1.0, 1.0, size=self.doc_embedding_size), axis=0)
@@ -654,6 +662,9 @@ class doc2vec(BaseEstimator, TransformerMixin):
             is_final = False
             epoch_loss = 0
             batches_run = 0
+
+            # Create resize-op to resize the current doc_embeddings Variable with
+            # new dimensions for incoming documents
             resize_op = tf.assign(self.doc_embeddings, d_embeddings, validate_shape=False)
             self.sess.run(resize_op)
 
@@ -674,14 +685,19 @@ class doc2vec(BaseEstimator, TransformerMixin):
             self.new_doc_embeddings = self.sess.run(self.normalized_doc_embeddings)
 
             self.saver.save(self.sess, self.path + predict_path + 'model.ckpt')
-            with open(self.path + predict_path + 'word_embeddings.pickle', 'wb') as f:
+
+            # Save new doc_embeddings pickle file
+            with open(self.path + predict_path + 'doc_embeddings.pickle', 'wb') as f:
                 pickle.dump(self.new_doc_embeddings, f)
 
+        # Return the vectors of new documents
         return self.new_doc_embeddings[-len_doc:]
 
+    # Save current session of class instance
     def save(self):
         params = self.get_params()
 
+        # Save session and params
         model_path = self.saver.save(self.sess, self.path + 'model.ckpt')
 
         with open(self.path + 'word_embeddings.pickle', 'wb') as f:
@@ -700,6 +716,7 @@ class doc2vec(BaseEstimator, TransformerMixin):
             self.saver.restore(self.sess, model_path)
 
     @classmethod
+    # Restore any instance of class by estimator
     def restore(cls, save_path):
 
         with open(save_path + 'model_params.pickle', 'rb') as f:
